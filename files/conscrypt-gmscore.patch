@@ -1,0 +1,263 @@
+From 826fa57624fc7c3512386c60eed49531d5792dc2 Mon Sep 17 00:00:00 2001
+From: Marvin W <git@larma.de>
+Date: Tue, 17 Nov 2020 22:21:37 +0100
+Subject: [PATCH] Patch to build conscrypt-gmscore
+SPDX-FileCopyrightText: 2020, microG Project Team
+SPDX-License-Identifier: Apache-2.0
+
+---
+ android/CMakeLists.txt |   6 +-
+ android/build.gradle   |   4 +-
+ build.gradle           |   3 +-
+ gmscore/build.gradle   | 153 +++++++++++++++++++++++++++++++++++++++++
+ settings.gradle        |   2 +
+ 5 files changed, 164 insertions(+), 4 deletions(-)
+ create mode 100644 gmscore/build.gradle
+
+diff --git a/android/CMakeLists.txt b/android/CMakeLists.txt
+index 064e12a3..ff5029ae 100644
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ cmake_minimum_required(VERSION 3.4.1)
+-add_library(conscrypt_jni
++add_library(conscrypt_gmscore_jni
+             SHARED
+             ../common/src/jni/main/cpp/conscrypt/compatibility_close_monitor.cc
+             ../common/src/jni/main/cpp/conscrypt/jniload.cc
+@@ -13,13 +13,15 @@ include_directories(../common/src/jni/main/include/
+                     ${BORINGSSL_HOME}/include)
+ 
+ find_library(android-log-lib log)
+-target_link_libraries(conscrypt_jni ${android-log-lib} ssl crypto)
++target_link_libraries(conscrypt_gmscore_jni ${android-log-lib} ssl crypto)
+ 
+ add_definitions(-DANDROID
+                 -fvisibility=hidden
+                 -DBORINGSSL_SHARED_LIBRARY
+                 -DBORINGSSL_IMPLEMENTATION
+                 -DOPENSSL_SMALL
++                -DCONSCRYPT_UNBUNDLED
++                -DJNI_JARJAR_PREFIX=com/google/android/gms/
+                 -D_XOPEN_SOURCE=700
+                 -Wno-unused-parameter
+                 # The following two lines are taken from BoringSSL's build file.  As written there:
+diff --git a/android/build.gradle b/android/build.gradle
+index 38ea56dd..55c4ae74 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -57,9 +57,11 @@ if (androidSdkInstalled) {
+                             '-DBORINGSSL_SHARED_LIBRARY',
+                             '-DBORINGSSL_IMPLEMENTATION',
+                             '-DOPENSSL_SMALL',
++                            '-DCONSCRYPT_UNBUNDLED',
++                            '-DJNI_JARJAR_PREFIX=com/google/android/gms/',
+                             '-D_XOPEN_SOURCE=700',
+                             '-Wno-unused-parameter'
+-                    targets 'conscrypt_jni'
++                    targets 'conscrypt_gmscore_jni'
+                 }
+             }
+             ndk {
+diff --git a/build.gradle b/build.gradle
+index 64b586f0..17edfb6b 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -25,6 +25,7 @@ plugins {
+ 
+ subprojects {
+     def androidProject = ((project.name == 'conscrypt-android')
++            || (project.name == 'conscrypt-gmscore')
+             || (project.name == 'conscrypt-android-platform')
+             || (project.name == 'conscrypt-benchmark-android')
+             || (project.name == 'conscrypt-benchmark-caliper'))
+@@ -49,7 +50,7 @@ subprojects {
+     apply plugin: "jacoco"
+     apply plugin: "net.ltgt.errorprone"
+ 
+-    group = "org.conscrypt"
++    group = "org.microg.gms"
+     description = 'Conscrypt is an alternate Java Security Provider that uses BoringSSL'
+     version = "2.5.1"
+ 
+diff --git a/gmscore/build.gradle b/gmscore/build.gradle
+new file mode 100644
+index 00000000..6343c604
+--- /dev/null
++++ b/gmscore/build.gradle
+@@ -0,0 +1,153 @@
++/*
++ * SPDX-FileCopyrightText: 2020, microG Project Team
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++buildscript {
++    repositories {
++        jcenter()
++    }
++    dependencies {
++        classpath 'com.googlecode.jarjar:jarjar:1.3'
++    }
++}
++
++apply plugin: 'maven-publish'
++apply plugin: 'signing'
++
++import com.tonicsystems.jarjar.MainProcessor
++import com.tonicsystems.jarjar.PatternElement
++import com.tonicsystems.jarjar.RulesFileParser
++import com.tonicsystems.jarjar.ext_util.JarProcessor
++import com.tonicsystems.jarjar.ext_util.StandaloneJarProcessor
++
++configurations.maybeCreate("default")
++configurations.maybeCreate("relocate")
++
++def archiveName = "conscrypt-gmscore-${version}.aar"
++def targetFile = "$buildDir/outputs/aar/$archiveName"
++
++dependencies {
++    relocate(project(path: ':conscrypt-android', configuration: 'default'))
++}
++
++task extractOriginalAar(type: Copy) {
++    dependsOn project.configurations.relocate
++    from zipTree(project.configurations.relocate.incoming.artifacts[0].file)
++    into "$buildDir/intermediates/original_aar_contents"
++}
++
++task copyAarContent(type: Copy) {
++    dependsOn extractOriginalAar
++    from("$buildDir/intermediates/original_aar_contents") {
++        exclude 'classes.jar'
++    }
++    into "$buildDir/intermediates/new_aar_contents"
++}
++
++class JarJar extends DefaultTask {
++    private File from
++    private File to
++    private String rules = ""
++
++    def from(File file) {
++        this.from = file
++    }
++
++    def to(File file) {
++        this.to = file
++    }
++
++    def rule(String rule) {
++        rules += "rule $rule\n"
++    }
++
++    def zap(String zap) {
++        rules += "zap $zap\n"
++    }
++
++    def keep(String keep) {
++        rules += "keep $keep\n"
++    }
++
++    @SuppressWarnings('GroovyAccessibility')
++    @TaskAction
++    def patch() {
++        List<PatternElement> rules = RulesFileParser.parse(this.rules)
++        JarProcessor proc = new MainProcessor(rules, false, true)
++        StandaloneJarProcessor.run(this.from, this.to, proc)
++    }
++}
++
++task patchClassesJar(type: JarJar) {
++    dependsOn extractOriginalAar
++    from file("$buildDir/intermediates/original_aar_contents/classes.jar")
++    to file("$buildDir/intermediates/new_aar_contents/classes.jar")
++    rule 'org.conscrypt.** com.google.android.gms.@0'
++}
++
++task bundleNewAar(type: Zip) {
++    archiveFileName = archiveName
++    destinationDirectory = file("$buildDir/outputs/aar")
++    dependsOn copyAarContent
++    dependsOn patchClassesJar
++    from "$buildDir/intermediates/new_aar_contents"
++}
++
++artifacts.add("default", file(targetFile)) {
++    builtBy bundleNewAar
++}
++
++afterEvaluate {
++    publishing {
++        publications {
++            release(MavenPublication) {
++                pom {
++                    name = 'Conscrypt'
++                    description = 'Conscrypt is an alternate Java Security Provider that uses BoringSSL'
++                    url = 'https://github.com/microg/conscrypt_gmscore'
++                    licenses {
++                        license {
++                            name = 'The Apache Software License, Version 2.0'
++                            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
++                        }
++                    }
++                    developers {
++                        developer {
++                            id = 'microg'
++                            name = 'microG Team'
++                        }
++                        developer {
++                            id = 'mar-v-in'
++                            name = 'Marvin W.'
++                        }
++                    }
++                    scm {
++                        url = 'https://github.com/microg/conscrypt_gmscore'
++                        connection = 'scm:git:https://github.com/microg/conscrypt_gmscore.git'
++                        developerConnection = 'scm:git:ssh://github.com/microg/conscrypt_gmscore.git'
++                    }
++                }
++
++                artifact file(targetFile)
++            }
++        }
++        if (project.hasProperty('sonatype.username')) {
++            repositories {
++                maven {
++                    name = 'sonatype'
++                    url = 'https://oss.sonatype.org/service/local/staging/deploy/maven2/'
++                    credentials {
++                        username project.getProperty('sonatype.username')
++                        password project.getProperty('sonatype.password')
++                    }
++                }
++            }
++        }
++    }
++    if (project.hasProperty('signing.keyId')) {
++        signing {
++            sign publishing.publications
++        }
++    }
++}
+diff --git a/settings.gradle b/settings.gradle
+index 2eefbc7a..25872264 100644
+--- a/settings.gradle
++++ b/settings.gradle
+@@ -1,5 +1,6 @@
+ rootProject.name = "conscrypt"
+ include ":conscrypt-android"
++include ":conscrypt-gmscore"
+ include ":conscrypt-android-platform"
+ include ":conscrypt-android-stub"
+ include ":conscrypt-api-doclet"
+@@ -14,6 +15,7 @@ include ":conscrypt-openjdk-uber"
+ include ":conscrypt-testing"
+ 
+ project(':conscrypt-android').projectDir = "$rootDir/android" as File
++project(':conscrypt-gmscore').projectDir = "$rootDir/gmscore" as File
+ project(':conscrypt-android-platform').projectDir = "$rootDir/platform" as File
+ project(':conscrypt-android-stub').projectDir = "$rootDir/android-stub" as File
+ project(':conscrypt-api-doclet').projectDir = "$rootDir/api-doclet" as File
+-- 
+2.28.0
+
