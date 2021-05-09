@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2020, microG Project Team
 # SPDX-License-Identifier: Apache-2.0
 
-CONSCRYPT_REVISION=2.5.1
-BORINGSSL_REVISION=95d8eaa660040cfe7075a6a0390038a10cb64ff7
+CONSCRYPT_REVISION=2.5.2
+BORINGSSL_REVISION=409ea2837deef434be575d6e790ecc93df9dc899
 
 ROOT=$PWD
 ANDROID_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}
@@ -23,7 +23,7 @@ checkout() {
     git $GIT_ARGS clone -q -b $FETCH --bare $URL $GIT_DIR
   else
     echo "Fetching $NAME from $URL"
-    git $GIT_ARGS fetch -q $URL $FETCH
+    git $GIT_ARGS fetch -q -t $URL $FETCH
   fi
   if [ -d $WT_DIR ]; then rm -rf $WT_DIR; fi
   mkdir $WT_DIR
