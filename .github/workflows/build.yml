@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2021, microG Project Team
+# SPDX-License-Identifier: CC0-1.0
+
+name: Build
+on: [pull_request, push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Setup JDK
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+      - name: Build
+        run: ./build.sh
